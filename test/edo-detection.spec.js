@@ -1,8 +1,25 @@
-// Edo 偵測測試
+// Edo 偵測測試（v0.29 改版）
 //
-// 目的：用 Shinkansen 的段落偵測邏輯掃 Wikipedia 的「Edo」條目，
-// dump 一份結構化 JSON 報告到 test/reports/，方便後續分析
-// 段落偵測抓到/漏抓/誤抓哪些東西。
+// 目的：用 Shinkansen 真實的段落偵測邏輯（content.js 內的 collectParagraphs）
+// 掃 Wikipedia 的「Edo」條目，dump 一份結構化 JSON 報告。
+//
+// 與前一版（v0.28 detector-probe 鏡像）的差異：
+//   v0.28：注入 detector-probe.js 到 main world，跑「鏡像版」collectParagraphs
+//          —— 風險是 content.js 改了之後 probe 會 drift。
+//   v0.29：透過 CDP 在 content script isolated world 直接呼叫真實
+//          window.__shinkansen.collectParagraphs()，不再有鏡像，無 drift 風險。
+//
+// 為什麼非 CDP 不可（重要技術筆記）：
+//   - Playwright 的 page.evaluate(fn) 一律跑在頁面的 main world，看不到
+//     content script isolated world 的 window.__shinkansen。
+//   - Playwright 沒有原生公開的「指定 isolated world」API。
+//     （Puppeteer 有 ExecutionContext 可選；Playwright 沒有對應公開 API。）
+//   - 唯一穩定可行的路：透過 Chrome DevTools Protocol 監聽
+//     Runtime.executionContextCreated 事件，撈到 Shinkansen 對應的
+//     isolated world contextId，然後用 Runtime.evaluate 指定 contextId 跑。
+//
+// 也不會將 debug API 注入 main world：SPEC §16.5 設計原則 4 明確要求
+// debug API 留在 isolated world，不污染 page 全域。
 //
 // 注意：這份測試「不」實際呼叫 Gemini 翻譯，只跑偵測。
 import { test, expect } from './fixtures/extension.js';
@@ -14,44 +31,158 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const EDO_URL = 'https://en.wikipedia.org/wiki/Edo';
-const PROBE_PATH = path.resolve(__dirname, 'probe/detector-probe.js');
 const REPORTS_DIR = path.resolve(__dirname, 'reports');
+const SHINKANSEN_MANIFEST = path.resolve(__dirname, '../shinkansen/manifest.json');
 
-test('Wikipedia Edo 段落偵測', async ({ context }) => {
-  // 確保 reports 資料夾存在
+/**
+ * 取得指定 page 上 Shinkansen content script 的 isolated world execution
+ * context ID，並回傳一個可重複呼叫的 evaluator。
+ *
+ * 實作細節：
+ *   1. 對 page 開一個新的 CDP session
+ *   2. 監聽 Runtime.executionContextCreated（要在 Runtime.enable 之前掛，
+ *      避免漏掉早於 enable 的事件 —— enable 本身會 replay 現存 contexts）
+ *   3. Runtime.enable 讓現有 contexts 全部 replay 出來
+ *   4. 從候選裡找 auxData.type === 'isolated' 且 name === 'Shinkansen'
+ *      的 context（name 來自 extension manifest 的 name 欄位）
+ *   5. 萬一找不到，把所有 isolated world 候選印出來方便診斷
+ */
+async function getShinkansenEvaluator(page) {
+  const cdp = await page.context().newCDPSession(page);
+
+  const contexts = [];
+  cdp.on('Runtime.executionContextCreated', (event) => {
+    contexts.push(event.context);
+  });
+  cdp.on('Runtime.executionContextDestroyed', (event) => {
+    const idx = contexts.findIndex((c) => c.id === event.executionContextId);
+    if (idx >= 0) contexts.splice(idx, 1);
+  });
+
+  await cdp.send('Runtime.enable');
+
+  // content script 走 document_idle，給它一點時間就位
+  // （call site 也已經 waitForSelector + waitForTimeout，這裡是雙保險）
+  await page.waitForTimeout(500);
+
+  const isolated = contexts.filter((c) => c?.auxData?.type === 'isolated');
+  let shinkansen = isolated.find((c) => c.name === 'Shinkansen');
+
+  if (!shinkansen) {
+    // 第二層 fallback：name 不嚴格相等，含 'Shinkansen' 子字串也算
+    shinkansen = isolated.find((c) => /Shinkansen/i.test(c.name || ''));
+  }
+
+  if (!shinkansen) {
+    const dump = isolated.map((c) => ({
+      id: c.id,
+      name: c.name,
+      origin: c.origin,
+      auxData: c.auxData,
+    }));
+    throw new Error(
+      `找不到 Shinkansen 的 isolated world execution context。` +
+      `\n候選 isolated worlds：${JSON.stringify(dump, null, 2)}`,
+    );
+  }
+
+  /**
+   * 在 Shinkansen isolated world 內 evaluate 一段表達式，回傳 plain JS value。
+   * 用 returnByValue: true 跨 boundary 序列化。
+   */
+  async function evaluate(expression) {
+    const result = await cdp.send('Runtime.evaluate', {
+      contextId: shinkansen.id,
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (result.exceptionDetails) {
+      throw new Error(
+        `Runtime.evaluate 失敗：${result.exceptionDetails.text}` +
+        `\nexpression: ${expression}`,
+      );
+    }
+    return result.result.value;
+  }
+
+  return { cdp, contextId: shinkansen.id, contextName: shinkansen.name, evaluate };
+}
+
+function readManifestVersion() {
+  const m = JSON.parse(fs.readFileSync(SHINKANSEN_MANIFEST, 'utf8'));
+  return m.version;
+}
+
+test('Wikipedia Edo 段落偵測（透過 window.__shinkansen debug API）', async ({ context }) => {
   fs.mkdirSync(REPORTS_DIR, { recursive: true });
 
   const page = await context.newPage();
   await page.goto(EDO_URL, { waitUntil: 'domcontentloaded' });
-  // Wikipedia 主內容載入後再等一下，讓 lazy 圖片與隱藏選單就位
   await page.waitForSelector('#mw-content-text', { timeout: 30_000 });
   await page.waitForTimeout(1000);
 
-  // 注入 probe 腳本（在頁面 main world 內執行）
-  const probeSource = fs.readFileSync(PROBE_PATH, 'utf8');
-  await page.addScriptTag({ content: probeSource });
+  const { evaluate, contextId, contextName } = await getShinkansenEvaluator(page);
+  console.log(`[CDP] Shinkansen isolated world: name="${contextName}", contextId=${contextId}`);
 
-  // 跑 probe
-  const report = await page.evaluate(() => window.__shinkansenProbe.run());
+  // ── 1. 版本 drift assertion ──────────────────────────────
+  // 真實 extension 內的 window.__shinkansen.version 必須 === manifest.json 的 version。
+  // 兩邊不一致 = service worker 沒重新載入新版 manifest，或 extension 載到舊版。
+  const apiVersion = await evaluate('window.__shinkansen.version');
+  const manifestVersion = readManifestVersion();
+  if (apiVersion !== manifestVersion) {
+    throw new Error(
+      `[DRIFT] window.__shinkansen.version (${apiVersion}) ≠ manifest.json version (${manifestVersion})`,
+    );
+  }
 
-  // 基本驗證：至少要偵測到一些段落，否則表示 probe 出狀況
-  expect(report.counts.total).toBeGreaterThan(10);
+  // ── 2. 真實偵測結果 ──────────────────────────────────────
+  const t0 = Date.now();
+  const units = await evaluate('JSON.stringify(window.__shinkansen.collectParagraphs())');
+  const elapsedMs = Date.now() - t0;
+  const parsed = JSON.parse(units);
 
-  // 寫檔
+  expect(parsed.length).toBeGreaterThan(10);
+
+  // 額外抓 state 留紀錄
+  const state = await evaluate('JSON.stringify(window.__shinkansen.getState())');
+
+  // ── 3. 統計 ──────────────────────────────────────────────
+  const tagCounts = {};
+  for (const u of parsed) tagCounts[u.tag] = (tagCounts[u.tag] || 0) + 1;
+  const withMedia = parsed.filter((u) => u.hasMedia).length;
+
+  // ── 4. 寫報告 ────────────────────────────────────────────
+  const report = {
+    source: 'window.__shinkansen.collectParagraphs (real content.js)',
+    extensionVersion: apiVersion,
+    url: page.url(),
+    title: await page.title(),
+    timestamp: new Date().toISOString(),
+    elapsedMs,
+    counts: {
+      total: parsed.length,
+      withMedia,
+      tagDistribution: tagCounts,
+    },
+    state: JSON.parse(state),
+    units: parsed,
+  };
+
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const outPath = path.join(REPORTS_DIR, `edo-detection-${ts}.json`);
   fs.writeFileSync(outPath, JSON.stringify(report, null, 2), 'utf8');
 
-  // 在 test log 印摘要，方便 npm test 直接看
-  console.log('\n──── Edo 偵測摘要 ────');
-  console.log('URL          :', report.url);
-  console.log('翻譯單位總數 :', report.counts.total);
-  console.log('  TreeWalker :', report.counts.fromTreeWalker);
-  console.log('  Selector補抓:', report.counts.fromIncludeBySelector);
-  console.log('被跳過統計   :', JSON.stringify(report.skipped));
-  console.log('耗時 (ms)    :', report.elapsedMs);
-  console.log('報告寫入     :', path.relative(process.cwd(), outPath));
-  console.log('────────────────────\n');
+  // ── 5. log 摘要 ──────────────────────────────────────────
+  console.log('\n──── Edo 偵測摘要（真實 content.js） ────');
+  console.log('Extension 版本 :', apiVersion);
+  console.log('URL            :', report.url);
+  console.log('翻譯單位總數   :', parsed.length);
+  console.log('Tag 分佈       :', JSON.stringify(tagCounts));
+  console.log('含媒體單位     :', withMedia);
+  console.log('耗時 (ms)      :', elapsedMs);
+  console.log('報告寫入       :', path.relative(process.cwd(), outPath));
+  console.log('──────────────────────────────────────────\n');
 
   await page.close();
 });
