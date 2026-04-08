@@ -126,9 +126,19 @@ test('Wikipedia Edo 段落偵測（透過 window.__shinkansen debug API）', asy
   console.log(`[CDP] Shinkansen isolated world: name="${contextName}", contextId=${contextId}`);
 
   // ── 1. 版本 drift assertion ──────────────────────────────
-  // 真實 extension 內的 window.__shinkansen.version 必須 === manifest.json 的 version。
-  // 兩邊不一致 = service worker 沒重新載入新版 manifest，或 extension 載到舊版。
+  // 此測試針對 v0.30 的 collectParagraphsWithStats() debug API 撰寫，
+  // 將預期版本寫死可確保「測試所依賴的 debug API 版本」與「實際載入的
+  // extension 版本」沒有 drift。下次 Cowork bump 版本 + 加新 API 時，
+  // 這行會明確 fail，提示測試需要同步更新（取代靜默 pass 的風險）。
+  const EXPECTED_VERSION = '0.30';
   const apiVersion = await evaluate('window.__shinkansen.version');
+  if (apiVersion !== EXPECTED_VERSION) {
+    throw new Error(
+      `[DRIFT] window.__shinkansen.version (${apiVersion}) ≠ EXPECTED_VERSION (${EXPECTED_VERSION})`,
+    );
+  }
+  // 雙保險：實際載入的 extension 版本也必須與 repo 內 manifest.json 一致
+  // （避免 Chrome 載到舊版 cache 的情境）。
   const manifestVersion = readManifestVersion();
   if (apiVersion !== manifestVersion) {
     throw new Error(
@@ -136,37 +146,39 @@ test('Wikipedia Edo 段落偵測（透過 window.__shinkansen debug API）', asy
     );
   }
 
-  // ── 2. 真實偵測結果 ──────────────────────────────────────
+  // ── 2. 真實偵測結果（v0.30：含 walker 跳過統計） ─────────
   const t0 = Date.now();
-  const units = await evaluate('JSON.stringify(window.__shinkansen.collectParagraphs())');
+  const raw = await evaluate('JSON.stringify(window.__shinkansen.collectParagraphsWithStats())');
   const elapsedMs = Date.now() - t0;
-  const parsed = JSON.parse(units);
+  const { units, skipStats } = JSON.parse(raw);
 
-  expect(parsed.length).toBeGreaterThan(10);
+  expect(units.length).toBeGreaterThan(10);
+  expect(skipStats).toBeTruthy();
 
   // 額外抓 state 留紀錄
   const state = await evaluate('JSON.stringify(window.__shinkansen.getState())');
 
   // ── 3. 統計 ──────────────────────────────────────────────
   const tagCounts = {};
-  for (const u of parsed) tagCounts[u.tag] = (tagCounts[u.tag] || 0) + 1;
-  const withMedia = parsed.filter((u) => u.hasMedia).length;
+  for (const u of units) tagCounts[u.tag] = (tagCounts[u.tag] || 0) + 1;
+  const withMedia = units.filter((u) => u.hasMedia).length;
 
   // ── 4. 寫報告 ────────────────────────────────────────────
   const report = {
-    source: 'window.__shinkansen.collectParagraphs (real content.js)',
+    source: 'window.__shinkansen.collectParagraphsWithStats (real content.js)',
     extensionVersion: apiVersion,
     url: page.url(),
     title: await page.title(),
     timestamp: new Date().toISOString(),
     elapsedMs,
     counts: {
-      total: parsed.length,
+      total: units.length,
       withMedia,
       tagDistribution: tagCounts,
     },
+    skipStats,
     state: JSON.parse(state),
-    units: parsed,
+    units,
   };
 
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
@@ -177,9 +189,10 @@ test('Wikipedia Edo 段落偵測（透過 window.__shinkansen debug API）', asy
   console.log('\n──── Edo 偵測摘要（真實 content.js） ────');
   console.log('Extension 版本 :', apiVersion);
   console.log('URL            :', report.url);
-  console.log('翻譯單位總數   :', parsed.length);
+  console.log('翻譯單位總數   :', units.length);
   console.log('Tag 分佈       :', JSON.stringify(tagCounts));
   console.log('含媒體單位     :', withMedia);
+  console.log('被跳過統計     :', JSON.stringify(skipStats));
   console.log('耗時 (ms)      :', elapsedMs);
   console.log('報告寫入       :', path.relative(process.cwd(), outPath));
   console.log('──────────────────────────────────────────\n');
