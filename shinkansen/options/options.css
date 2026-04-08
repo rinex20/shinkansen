@@ -1,0 +1,108 @@
+body {
+  margin: 0;
+  font-family: -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  background: #f5f5f7;
+  color: #1d1d1f;
+}
+
+.container {
+  max-width: 720px;
+  margin: 40px auto;
+  padding: 32px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.06);
+}
+
+h1 { margin: 0 0 24px; font-size: 22px; }
+h2 { margin: 28px 0 12px; font-size: 15px; color: #0071e3; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+
+section { margin-bottom: 20px; }
+
+label {
+  display: block;
+  margin: 12px 0;
+  font-size: 13px;
+  color: #1d1d1f;
+}
+
+label.switch { display: flex; align-items: center; gap: 8px; }
+
+input[type="text"],
+input[type="password"],
+input[type="number"],
+select,
+textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  font: 13px -apple-system, 'PingFang TC', monospace;
+  box-sizing: border-box;
+  background: #fff;
+}
+
+textarea { resize: vertical; font-family: -apple-system, 'PingFang TC', sans-serif; }
+
+.muted { color: #86868b; font-size: 12px; }
+
+.actions {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid #eee;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+button.primary {
+  padding: 10px 24px;
+  background: #0071e3;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.primary:hover { background: #0077ed; }
+
+button.secondary {
+  padding: 8px 16px;
+  background: #fff;
+  color: #0071e3;
+  border: 1px solid #0071e3;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+button.secondary:hover { background: #f0f7ff; }
+
+.btn-row { display: flex; gap: 8px; }
+
+#save-status { font-size: 12px; color: #34c759; }
+
+#log-view {
+  margin-top: 8px;
+  padding: 10px;
+  background: #1d1d1f;
+  color: #d2d2d7;
+  font: 11px 'SF Mono', Menlo, monospace;
+  max-height: 300px;
+  overflow: auto;
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+
+kbd {
+  background: #f5f5f7;
+  border: 1px solid #d2d2d7;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font: 11px 'SF Mono', monospace;
+}
+
+a { color: #0071e3; text-decoration: none; }
+a:hover { text-decoration: underline; }

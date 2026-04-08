@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Shinkansen 浮世繪風格圖示 -->
+  <!-- 設計:富士山、紅日、北齋風浪、新幹線車頭 -->
+
+  <defs>
+    <!-- 圓角方形遮罩,讓整體呈現印章 / 浮世繪木版的方塊感 -->
+    <clipPath id="frame">
+      <rect x="0" y="0" width="128" height="128" rx="22" ry="22"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <!-- 米色和紙底 (浮世繪用紙的暖色調) -->
+    <rect x="0" y="0" width="128" height="128" fill="#f3e3c3"/>
+
+    <!-- 紅日 (旭日) -->
+    <circle cx="86" cy="46" r="20" fill="#cf3a2c"/>
+
+    <!-- 富士山主體 (普魯士藍) -->
+    <path d="M 8 84
+             L 46 32
+             Q 52 24 58 32
+             L 96 84 Z"
+          fill="#1f3b66" stroke="#0c1a30" stroke-width="2.4" stroke-linejoin="round"/>
+
+    <!-- 富士山雪冠 -->
+    <path d="M 38 44
+             L 46 32
+             Q 52 24 58 32
+             L 66 44
+             Q 60 40 56 44
+             Q 52 48 48 44
+             Q 44 40 38 44 Z"
+          fill="#fafafa" stroke="#0c1a30" stroke-width="1.6" stroke-linejoin="round"/>
+
+    <!-- 山腰雲霧 (細白線條) -->
+    <path d="M 22 70 Q 32 66 42 70 T 62 70 T 82 70"
+          fill="none" stroke="#fafafa" stroke-width="2.4" stroke-linecap="round"/>
+
+    <!-- 北齋風海浪 (前景) -->
+    <!-- 浪的主體 -->
+    <path d="M 0 92
+             Q 12 78 26 88
+             Q 38 96 50 86
+             Q 62 76 76 86
+             Q 90 96 104 86
+             Q 116 78 128 88
+             L 128 128
+             L 0 128 Z"
+          fill="#1f3b66" stroke="#0c1a30" stroke-width="2.4" stroke-linejoin="round"/>
+
+    <!-- 浪花卷曲 (白色高光) -->
+    <path d="M 18 90
+             Q 22 84 28 88
+             Q 32 92 28 94
+             Q 24 95 22 92"
+          fill="#fafafa" stroke="#0c1a30" stroke-width="1.4" stroke-linejoin="round"/>
+    <path d="M 70 88
+             Q 76 80 84 86
+             Q 88 90 84 93
+             Q 80 95 76 91"
+          fill="#fafafa" stroke="#0c1a30" stroke-width="1.4" stroke-linejoin="round"/>
+
+    <!-- 新幹線車頭 (從浪中穿出) -->
+    <!-- 車身陰影 -->
+    <path d="M 32 110
+             Q 24 110 24 104
+             Q 24 100 30 98
+             L 92 98
+             Q 102 98 104 104
+             L 104 110 Z"
+          fill="#0c1a30"/>
+
+    <!-- 車身白色主體 -->
+    <path d="M 30 108
+             Q 24 108 24 102
+             Q 24 99 30 97
+             L 88 97
+             Q 100 97 104 102
+             L 104 108 Z"
+          fill="#fafafa" stroke="#0c1a30" stroke-width="2.2" stroke-linejoin="round"/>
+
+    <!-- 車身藍色腰帶 -->
+    <path d="M 28 104
+             L 102 104
+             L 102 107
+             L 28 107 Z"
+          fill="#1f78c8"/>
+
+    <!-- 車頭駕駛艙窗 (深色) -->
+    <path d="M 28 100
+             Q 26 102 28 103
+             L 36 103
+             L 38 100 Z"
+          fill="#0c1a30"/>
+
+    <!-- 側窗 (一連串小方窗) -->
+    <rect x="48" y="100" width="6" height="3" fill="#1f3b66"/>
+    <rect x="58" y="100" width="6" height="3" fill="#1f3b66"/>
+    <rect x="68" y="100" width="6" height="3" fill="#1f3b66"/>
+    <rect x="78" y="100" width="6" height="3" fill="#1f3b66"/>
+    <rect x="88" y="100" width="6" height="3" fill="#1f3b66"/>
+  </g>
+
+  <!-- 外框 (印章感) -->
+  <rect x="1" y="1" width="126" height="126" rx="22" ry="22"
+        fill="none" stroke="#0c1a30" stroke-width="2"/>
+</svg>

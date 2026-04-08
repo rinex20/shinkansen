@@ -1,0 +1,14 @@
+# Cowork 端的土法煉鋼備份（git 取代之後可留著當雙保險，但不進版控）
+.backups/
+
+# Node / Playwright（之後在 Claude Code 裡會裝）
+node_modules/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# 系統垃圾
+.DS_Store
+*.log
+.env
+.env.*

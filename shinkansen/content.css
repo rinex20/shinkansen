@@ -1,0 +1,5 @@
+/* content.css — Shinkansen
+ * 譯文以「原地替換」方式寫入原本的元素，完全繼承網站既有樣式，
+ * 因此不需要任何 .shinkansen-translation 區塊樣式。
+ * 本檔保留給未來可能的全域樣式微調使用（例如 Toast host 定位）。
+ */

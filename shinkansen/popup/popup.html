@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>Shinkansen</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>🚄 Shinkansen</h1>
+    <span class="version" id="version"></span>
+  </header>
+
+  <main>
+    <button id="translate-btn" class="primary">翻譯本頁</button>
+
+    <div class="row">
+      <label for="auto">白名單自動翻譯</label>
+      <input type="checkbox" id="auto">
+    </div>
+
+    <div class="cache-row">
+      <span id="cache-info" class="cache-info">快取：讀取中…</span>
+      <button id="clear-cache-btn" class="link small">清除快取</button>
+    </div>
+
+    <div class="cache-row">
+      <span id="usage-info" class="cache-info">累計費用：讀取中…</span>
+      <button id="reset-usage-btn" class="link small">重置統計</button>
+    </div>
+
+    <div id="status" class="status">狀態：就緒</div>
+  </main>
+
+  <footer>
+    <button id="options-btn" class="link">⚙ 設定</button>
+    <span class="hint">Option + S 快速切換</span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
