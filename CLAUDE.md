@@ -47,18 +47,33 @@
 
 ### 1.5 版本快照備份（Backup & Restore）
 
+此規則有兩種實作，**依工作環境擇一**：
+
+**A. Cowork 環境（本檔 Claude 預設環境，無 git 的沙盒）**
+
 - **動手改 `shinkansen/` 前必須先快照**：每次要修改 `shinkansen/` 內任何檔案之前，**必須先**把當前 `shinkansen/` 整個複製到 `.backups/shinkansen-v<當前 manifest 版本>/`，確認快照建立後才動手改 code 並 bump 版本號
 - **指令**：`cp -a shinkansen .backups/shinkansen-v<版本號>`
 - **範圍**：只備份 `shinkansen/` 資料夾（程式本體），不備份 `SPEC.md` / `CLAUDE.md` / `README.md`
 - **保留策略**：固定保留最新 5 份快照。每次建立新快照後，若 `.backups/` 裡超過 5 份，必須刪除版本號最舊的那幾份，讓總數回到 5
 - **冪等**：若對應版本的快照資料夾已存在（例如同一版本內第二次修改），**不要**覆蓋，略過即可（因為舊快照才是「被改之前的原始狀態」）
-- **回復流程**：當使用者說「回復到 0.XX」，執行：
-  1. 確認 `.backups/shinkansen-v0.XX/` 存在
-  2. 把當前 `shinkansen/` 先快照一份（避免回復動作本身遺失現狀）
-  3. 刪除當前 `shinkansen/`，把 `.backups/shinkansen-v0.XX/` 複製回 `shinkansen/`
+
+**B. Claude Code 環境（本機有 git 的環境，自 v0.28 起使用）**
+
+- **改 `shinkansen/` 前先確認 working tree 乾淨**：若有未 commit 的變更先 commit 或 stash，再動手
+- **bump 版本號後必須立刻 `git tag v<新版本>`**：tag 取代 `.backups/` 的角色，作為可回復點
+- **不需要手動複製資料夾**：git 本身就是版本快照。`git checkout v0.29 -- shinkansen/` 即可還原
+- **`.backups/` 已列入 `.gitignore`**：不進版控，保留於 Cowork 端作為雙保險，兩邊不互相依賴
+
+**共用的回復流程**（兩種環境邏輯相同）
+
+當使用者說「回復到 0.XX」，執行：
+  1. 確認 `.backups/shinkansen-v0.XX/`（Cowork）或 `git tag v0.XX`（Claude Code）存在
+  2. 把當前 `shinkansen/` 先保留一份（Cowork: 快照；Claude Code: commit 或 stash），避免回復動作本身遺失現狀
+  3. 用對應方法還原：Cowork 刪除當前 `shinkansen/` 再複製 `.backups/shinkansen-v0.XX/` 回來；Claude Code 跑 `git checkout v0.XX -- shinkansen/`
   4. 確認 `manifest.json` 的 version 已經是 0.XX
   5. 告訴使用者要 reload extension
-- **起點**：v0.28 的快照已於機制建立時補存
+
+**起點**：v0.28 的 Cowork 快照與 git tag `v0.28` 均已於機制建立時補存。
 
 ### 2. SPEC.md 同步
 

@@ -224,6 +224,11 @@
   // 排除這些 ARIA role 的容器（全站頂部 banner、搜尋區、輔助側欄等）
   const EXCLUDE_ROLES = new Set(['banner', 'navigation', 'contentinfo', 'search']);
 
+  // 維護/警示模板類排除（Wikipedia ambox 家族等）
+  // 這些是「給編輯者看的警告框」,讀者無閱讀價值,翻譯只會浪費 token 與 Gemini 額度
+  // 新增項目請先在測試報告中確認確有出現再加,避免誤傷正文
+  const EXCLUDE_BY_SELECTOR = '.ambox, .box-AI-generated, .box-More_footnotes_needed';
+
   // 部分有意義但用 DIV / SPAN 包裝的元素，需透過 selector 補抓
   const INCLUDE_BY_SELECTOR = [
     '#siteSub',
@@ -240,6 +245,9 @@
   ].join(',');
 
   function isInsideExcludedContainer(el) {
+    // 類別/選擇器層級排除（ambox 等維護模板）
+    // closest() 包含元素自身,可一次涵蓋「自己是 .ambox」與「祖先是 .ambox」兩種情況
+    if (el.closest && el.closest(EXCLUDE_BY_SELECTOR)) return true;
     let cur = el;
     while (cur && cur !== document.body) {
       const tag = cur.tagName;
@@ -763,9 +771,62 @@
   // 對外暴露（供 popup 透過 scripting 呼叫）
   window.__shinkansen_translate = translatePage;
 
+  // ─── Debug API （唯讀,供自動化測試查詢內部狀態） ────────
+  // 設計原則：
+  // 1. 只暴露「查詢」,不暴露「執行」——避免測試誤觸真實翻譯燒錢
+  // 2. 只回傳 plain object,絕不回 DOM Element 參考——跨 Playwright boundary
+  //    會序列化失敗
+  // 3. 掛在 window（此處是 content script 的 isolated world window）,測試端用
+  //    page.evaluate(fn, { world: 'context' }) 或 CDP 指定 isolated world 存取
+  // 4. version 對應 manifest version,方便測試端 assert「probe 版本 === 真實版本」,
+  //    debug API 若 drift 至少能被偵測
+  // 相關 ADR：見 SPEC.md §Debug API
+  function buildSelectorPath(el) {
+    const parts = [];
+    let cur = el;
+    while (cur && cur !== document.body && parts.length < 6) {
+      let s = cur.tagName.toLowerCase();
+      if (cur.id) {
+        s += '#' + cur.id;
+        parts.unshift(s);
+        break;
+      }
+      if (cur.className && typeof cur.className === 'string') {
+        const cls = cur.className.trim().split(/\s+/).slice(0, 2).join('.');
+        if (cls) s += '.' + cls;
+      }
+      parts.unshift(s);
+      cur = cur.parentElement;
+    }
+    return parts.join(' > ');
+  }
+
+  window.__shinkansen = {
+    get version() { return chrome.runtime.getManifest().version; },
+    // 純偵測：呼叫真實 collectParagraphs,回傳序列化安全的 plain objects
+    collectParagraphs() {
+      return collectParagraphs().map((el, i) => ({
+        index: i,
+        tag: el.tagName,
+        textLength: (el.innerText || '').trim().length,
+        textPreview: (el.innerText || '').trim().slice(0, 200),
+        hasMedia: containsMedia(el),
+        selectorPath: buildSelectorPath(el),
+      }));
+    },
+    // 當前翻譯狀態快照
+    getState() {
+      return {
+        translated: STATE.translated,
+        replacedCount: STATE.replaced.length,
+        cacheSize: STATE.cache.size,
+      };
+    },
+  };
+
   // 每次 content script 載入時（新頁面或重新整理）先清掉 badge,
   // 避免 SPA 同站內部導航時 chrome.tabs.onUpdated 沒觸發造成殘留。
   chrome.runtime.sendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
 
-  console.log('[Shinkansen] content script ready');
+  console.log('[Shinkansen] content script ready (v' + chrome.runtime.getManifest().version + ')');
 })();
