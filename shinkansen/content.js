@@ -247,7 +247,67 @@
     // Wikipedia 的 {{thumb}} / {{wide image}} template 用 div.thumbcaption
     // 裝說明文字 （不是 <figcaption>)，需要主動補抓
     '.thumbcaption',
+    // v0.38: X / Twitter 的推文正文用 <div data-testid="tweetText"> 包住，
+    // 整個子樹都是 <span>/<a>/<br>，沒有任何 block tag，walker 不會接受。
+    // 推文是 X 上最核心的內容，必須主動補抓。同理補抓嵌入卡片的標題與描述。
+    '[data-testid="tweetText"]',
+    '[data-testid="card.layoutLarge.detail"] > div',
+    '[data-testid="card.layoutSmall.detail"] > div',
+    // v0.40: WordPress block theme 的「上一篇 / 下一篇」導覽連結。
+    // 用 <div class="wp-block-post-navigation-link"> 包住 span + a,沒有 block tag,
+    // walker 不會接受,需要主動補抓。Stratechery 等 WP 站都會用。
+    '.wp-block-post-navigation-link',
   ].join(',');
+
+  // v0.39: 判斷一個 block element 是否為「互動 widget 容器」。
+  // 若一個 block 裡面含有 <button> 或 [role="button"] / [role="link"] 的
+  // 互動控制項後代,它通常是一張卡片 / 列表項 / toolbar 而不是文字段落
+  // （例如 X 的 <li data-testid="UserCell"> 整張「Who to follow」卡）。
+  // 這種容器一旦被當成單一段落送 serializer,會產生太多 slot 導致 LLM
+  // 對齊失敗 → injector 走 textContent fallback → 整個卡片結構被壓扁,
+  // avatar / 名稱 header / 按鈕通通消失。
+  //
+  // 直接整塊 reject 即可：walker 不會降到子孫去找（反正 X 的子孫都是
+  // 非 block div,降了也收不到東西),而這類卡片裡的 bio 等副內容屬於側
+  // 欄輔助,不翻譯也比結構炸掉好太多。
+  //
+  // 注意：role="link" 納入是為了排除 Follow / 卡片封面等整塊可點的 widget;
+  // 但不能把 <a> 本身列入（文章段落裡一定有 <a>),所以只看 [role="link"]
+  // 這個 X / Material UI 會用的 hint,不看 A tag。
+  function isInteractiveWidgetContainer(el) {
+    return !!el.querySelector('button, [role="button"]');
+  }
+
+  // v0.40: 「nav 內容白名單」——某些 WordPress 外掛（例如 Jetpack 的相關貼文）
+  // 把「讀者要看的文章卡」裝在 <nav> 裡。語意上勉強說得通（nav = 導覽到其他
+  // 文章）但實質是正文外的延伸內容,應該翻譯。這類 nav 的 class 會帶有明確
+  // 的命名空間（jp-relatedposts-*)可以精準辨識。
+  //
+  // 這是 CLAUDE.md §6「結構性必須跳過」硬規則的「窄修例外」而不是方向轉變:
+  // 一般站內選單仍由 NAV 一律跳過的規則處理,只有命中白名單的 nav 才放行。
+  function isContentNav(el) {
+    if (!el || el.tagName !== 'NAV') return false;
+    const cls = el.className || '';
+    if (typeof cls !== 'string') return false;
+    // Jetpack Related Posts (Stratechery 等站使用)
+    if (/\bjp-relatedposts\b/.test(cls)) return true;
+    return false;
+  }
+
+  // v0.41: 「footer 內容白名單」——WordPress Block Theme 常把「延伸閱讀」類的
+  // 文章卡片區塊塞進 <footer class="wp-block-template-part"> 裡（例如
+  // Stratechery 底部的 Stratechery Plus 三欄 Updates / Podcasts / Interviews)。
+  // 語意上是站尾,但實質是讀者要看的內容。若 footer 裡含有 WordPress 的
+  // 「文章查詢」區塊（wp-block-query / wp-block-post-title)就判定為內容 footer
+  // 放行;一般站尾（版權、站內選單、社交連結)不會有這些 block,維持跳過。
+  //
+  // 這是 v0.40 nav 窄修的對稱延伸,同樣屬於 CLAUDE.md §6 的「窄修例外」而不
+  // 是方向轉變——一般 footer 仍然整塊跳過,只有命中白名單條件的 footer 才放行。
+  function isContentFooter(el) {
+    if (!el || el.tagName !== 'FOOTER') return false;
+    // 只要 footer 子樹裡有 WP 文章 block,就當成內容 footer
+    return !!el.querySelector('.wp-block-query, .wp-block-post-title, .wp-block-post');
+  }
 
   function isInsideExcludedContainer(el) {
     // v0.31 起不再做 class/selector 層級的內容排除（見上方硬規則註解）。
@@ -256,6 +316,16 @@
     let cur = el;
     while (cur && cur !== document.body) {
       const tag = cur.tagName;
+      // v0.40: nav 內容白名單例外——命中白名單的 nav 不算排除容器
+      if (tag === 'NAV' && isContentNav(cur)) {
+        cur = cur.parentElement;
+        continue;
+      }
+      // v0.41: footer 內容白名單例外——含 WP 文章 block 的 footer 放行
+      if (tag === 'FOOTER' && isContentFooter(cur)) {
+        cur = cur.parentElement;
+        continue;
+      }
       if (tag && SEMANTIC_CONTAINER_EXCLUDE_TAGS.has(tag)) return true;
       const role = cur.getAttribute && cur.getAttribute('role');
       if (role && EXCLUDE_ROLES.has(role)) return true;
@@ -723,6 +793,13 @@
           if (stats) stats.excludedContainer = (stats.excludedContainer || 0) + 1;
           return NodeFilter.FILTER_REJECT;
         }
+        // v0.39: 含 button / role=button 的 block 是互動 widget 容器（例如
+        // X 的 Who-to-follow UserCell <li>）,整塊不翻譯以免 serializer slot
+        // 爆炸壓扁結構。見 isInteractiveWidgetContainer 註解。
+        if (isInteractiveWidgetContainer(el)) {
+          if (stats) stats.interactiveWidget = (stats.interactiveWidget || 0) + 1;
+          return NodeFilter.FILTER_REJECT;
+        }
         if (!isVisible(el)) {
           if (stats) stats.invisible = (stats.invisible || 0) + 1;
           return NodeFilter.FILTER_REJECT;
@@ -763,6 +840,9 @@
       if (seen.has(el)) return;
       if (el.hasAttribute('data-shinkansen-translated')) return;
       if (isInsideExcludedContainer(el)) return;
+      // v0.39: selector 路徑也套相同的 widget 容器排除，避免未來有人加進來
+      // 的 selector 不小心命中互動卡片（例如 X 的推文卡片若未來結構變）。
+      if (isInteractiveWidgetContainer(el)) return;
       if (!isVisible(el)) return;
       if (!isCandidateText(el)) return;
       if (stats) stats.includedBySelector = (stats.includedBySelector || 0) + 1;
