@@ -324,4 +324,24 @@ chrome.runtime.onInstalled.addListener(async ({ reason }) => {
   // 安裝/更新時也檢查一次版本（雙重保險，SW 啟動時已經跑過一次）
   const currentVersion = chrome.runtime.getManifest().version;
   await cache.checkVersionAndClear(currentVersion);
+
+  // v0.62 起：API Key 從 chrome.storage.sync 搬到 chrome.storage.local，
+  // 避免跨 Google 帳號同步。這裡做一次主動遷移：若 sync 裡還殘留舊的 apiKey，
+  // 搬到 local（沒 local 版本才搬，已經有就尊重 local）然後從 sync 刪除。
+  // lib/storage.js::getSettings 也有 lazy migration 作為雙重保險。
+  if (reason === 'update' || reason === 'install') {
+    try {
+      const { apiKey: syncKey } = await chrome.storage.sync.get('apiKey');
+      if (typeof syncKey === 'string') {
+        const { apiKey: localKey } = await chrome.storage.local.get('apiKey');
+        if (!localKey && syncKey) {
+          await chrome.storage.local.set({ apiKey: syncKey });
+          console.log('[Shinkansen] apiKey migrated from sync → local');
+        }
+        await chrome.storage.sync.remove('apiKey');
+      }
+    } catch (err) {
+      console.warn('[Shinkansen] apiKey migration failed', err);
+    }
+  }
 });

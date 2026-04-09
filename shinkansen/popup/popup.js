@@ -73,13 +73,37 @@ async function refreshTranslateButton() {
   }
 }
 
+async function refreshShortcutHint() {
+  // 動態讀使用者在 chrome://extensions/shortcuts 設定的實際快捷鍵
+  // 避免寫死「Option + S」造成 popup 與實際設定不一致
+  const el = $('shortcut-hint');
+  if (!el) return;
+  try {
+    const cmds = await chrome.commands.getAll();
+    const toggle = cmds.find((c) => c.name === 'toggle-translate');
+    const shortcut = toggle?.shortcut?.trim();
+    if (shortcut) {
+      el.textContent = `${shortcut} 快速切換`;
+    } else {
+      // 使用者可能在 shortcuts 設定頁清掉了快捷鍵
+      el.textContent = '未設定快捷鍵';
+    }
+  } catch {
+    // chrome.commands 不可用時靜默留白，不要顯示錯誤
+    el.textContent = '';
+  }
+}
+
 async function init() {
   // 從 manifest 動態讀版本號，避免日後忘記同步
   const manifest = chrome.runtime.getManifest();
   $('version').textContent = 'v' + manifest.version;
 
-  const { autoTranslate = true, apiKey = '' }
-    = await chrome.storage.sync.get(['autoTranslate', 'apiKey']);
+  refreshShortcutHint();
+
+  // v0.62 起：autoTranslate 仍走 sync（跨裝置同步），apiKey 改走 local（不同步）
+  const { autoTranslate = true } = await chrome.storage.sync.get(['autoTranslate']);
+  const { apiKey = '' } = await chrome.storage.local.get(['apiKey']);
   $('auto').checked = autoTranslate;
   if (!apiKey) {
     statusEl.textContent = '狀態：⚠ 尚未設定 API Key';

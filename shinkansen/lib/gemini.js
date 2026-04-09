@@ -205,10 +205,12 @@ async function translateChunk(texts, settings) {
     ],
   };
 
-  // 只有在使用者明確選擇 FLEX/STANDARD/PRIORITY 時才送 serviceTier。
+  // 只有在使用者明確選擇 flex/standard/priority 時才送 service_tier。
   // 若為 'DEFAULT' 或空值則完全不送此欄位，避免舊模型拒絕。
+  // 注意：REST API 欄位名稱用 snake_case（service_tier），值用小寫（flex）,
+  // 對應 Google 官方 REST 範例與 JS SDK 慣例。
   if (serviceTier && serviceTier !== 'DEFAULT') {
-    body.serviceTier = serviceTier; // 短形式：FLEX / STANDARD / PRIORITY
+    body.service_tier = serviceTier.toLowerCase(); // "flex" / "standard" / "priority"
   }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;

@@ -12,7 +12,7 @@ export const DEFAULT_SETTINGS = {
   geminiConfig: {
     model: 'gemini-2.5-flash',
     serviceTier: 'DEFAULT',
-    temperature: 0.3,
+    temperature: 1.0,
     topP: 0.95,
     topK: 40,
     maxOutputTokens: 8192,
@@ -41,17 +41,50 @@ export const DEFAULT_SETTINGS = {
   maxConcurrentBatches: 10,
 };
 
+// v0.62 起：apiKey 改存 chrome.storage.local，不走 Google 帳號跨裝置同步。
+// 其餘設定仍存 sync。對下游呼叫端完全透明——getSettings() 回傳的物件
+// 依然有 .apiKey 欄位。
+const API_KEY_STORAGE_KEY = 'apiKey';
+
+// 一次性遷移：若 sync 裡還殘留 apiKey（舊版 <= v0.61 的使用者）、而 local
+// 還沒有，就把它搬到 local 並從 sync 刪除。呼叫 getSettings() 會自動觸發。
+async function migrateApiKeyIfNeeded(syncSaved) {
+  if (!syncSaved || typeof syncSaved.apiKey !== 'string') return;
+  const { [API_KEY_STORAGE_KEY]: localKey } = await chrome.storage.local.get(API_KEY_STORAGE_KEY);
+  if (!localKey && syncSaved.apiKey) {
+    // sync 有、local 沒有 → 搬過去
+    await chrome.storage.local.set({ [API_KEY_STORAGE_KEY]: syncSaved.apiKey });
+  }
+  // 無論 local 原本有沒有，都要把 sync 裡的 apiKey 清掉（避免之後又被同步回來）
+  await chrome.storage.sync.remove('apiKey');
+}
+
 export async function getSettings() {
   const saved = await chrome.storage.sync.get(null);
-  return {
+  await migrateApiKeyIfNeeded(saved);
+  // 從 local 讀 apiKey（v0.62 起的正規位置）
+  const { [API_KEY_STORAGE_KEY]: apiKey = '' } = await chrome.storage.local.get(API_KEY_STORAGE_KEY);
+  // saved.apiKey 可能還在（migrate 剛剛才刪），以 local 版本為準
+  const merged = {
     ...DEFAULT_SETTINGS,
     ...saved,
     geminiConfig: { ...DEFAULT_SETTINGS.geminiConfig, ...(saved.geminiConfig || {}) },
     pricing: { ...DEFAULT_SETTINGS.pricing, ...(saved.pricing || {}) },
     domainRules: { ...DEFAULT_SETTINGS.domainRules, ...(saved.domainRules || {}) },
   };
+  merged.apiKey = apiKey;
+  return merged;
 }
 
 export async function setSettings(patch) {
-  await chrome.storage.sync.set(patch);
+  // 若 patch 含 apiKey，抽出來寫 local；其餘寫 sync
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'apiKey')) {
+    const { apiKey, ...rest } = patch;
+    await chrome.storage.local.set({ [API_KEY_STORAGE_KEY]: apiKey });
+    if (Object.keys(rest).length > 0) {
+      await chrome.storage.sync.set(rest);
+    }
+  } else {
+    await chrome.storage.sync.set(patch);
+  }
 }

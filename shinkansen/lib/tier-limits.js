@@ -18,24 +18,33 @@
 //
 // 此對照表為靜態快照,Gemini 規格變動時需 bump extension 版本並更新此表。
 
+// v0.64：移除 gemini-2.0-flash，新增 3 / 3.1 系列。
+// preview 模型 rate limit 暫用保守估計值（Flash 系沿用同 tier 的 2.5 Flash 值，
+// Pro 系沿用 2.5 Pro 值），正式版發布後可再調整。
 export const TIER_LIMITS = {
   free: {
-    'gemini-2.5-pro':        { rpm: 5,   tpm: 250_000,   rpd: 100 },
-    'gemini-2.5-flash':      { rpm: 10,  tpm: 250_000,   rpd: 250 },
-    'gemini-2.5-flash-lite': { rpm: 15,  tpm: 250_000,   rpd: 1000 },
-    'gemini-2.0-flash':      { rpm: 15,  tpm: 1_000_000, rpd: 200 },
+    'gemini-2.5-pro':                { rpm: 5,   tpm: 250_000,   rpd: 100 },
+    'gemini-2.5-flash':              { rpm: 10,  tpm: 250_000,   rpd: 250 },
+    'gemini-2.5-flash-lite':         { rpm: 15,  tpm: 250_000,   rpd: 1000 },
+    'gemini-3-flash-preview':        { rpm: 10,  tpm: 250_000,   rpd: 250 },
+    'gemini-3.1-flash-lite-preview': { rpm: 15,  tpm: 250_000,   rpd: 1000 },
+    'gemini-3.1-pro-preview':        { rpm: 5,   tpm: 250_000,   rpd: 100 },
   },
   tier1: {
-    'gemini-2.5-pro':        { rpm: 150, tpm: 1_000_000, rpd: 1000 },
-    'gemini-2.5-flash':      { rpm: 300, tpm: 2_000_000, rpd: 1500 },
-    'gemini-2.5-flash-lite': { rpm: 300, tpm: 2_000_000, rpd: 1500 },
-    'gemini-2.0-flash':      { rpm: 300, tpm: 4_000_000, rpd: 1500 },
+    'gemini-2.5-pro':                { rpm: 150, tpm: 1_000_000, rpd: 1000 },
+    'gemini-2.5-flash':              { rpm: 300, tpm: 2_000_000, rpd: 1500 },
+    'gemini-2.5-flash-lite':         { rpm: 300, tpm: 2_000_000, rpd: 1500 },
+    'gemini-3-flash-preview':        { rpm: 300, tpm: 2_000_000, rpd: 1500 },
+    'gemini-3.1-flash-lite-preview': { rpm: 300, tpm: 2_000_000, rpd: 1500 },
+    'gemini-3.1-pro-preview':        { rpm: 150, tpm: 1_000_000, rpd: 1000 },
   },
   tier2: {
-    'gemini-2.5-pro':        { rpm: 1000, tpm: 2_000_000, rpd: 10_000 },
-    'gemini-2.5-flash':      { rpm: 2000, tpm: 4_000_000, rpd: 10_000 },
-    'gemini-2.5-flash-lite': { rpm: 2000, tpm: 4_000_000, rpd: 10_000 },
-    'gemini-2.0-flash':      { rpm: 2000, tpm: 4_000_000, rpd: 10_000 },
+    'gemini-2.5-pro':                { rpm: 1000, tpm: 2_000_000, rpd: 10_000 },
+    'gemini-2.5-flash':              { rpm: 2000, tpm: 4_000_000, rpd: 10_000 },
+    'gemini-2.5-flash-lite':         { rpm: 2000, tpm: 4_000_000, rpd: 10_000 },
+    'gemini-3-flash-preview':        { rpm: 2000, tpm: 4_000_000, rpd: 10_000 },
+    'gemini-3.1-flash-lite-preview': { rpm: 2000, tpm: 4_000_000, rpd: 10_000 },
+    'gemini-3.1-pro-preview':        { rpm: 1000, tpm: 2_000_000, rpd: 10_000 },
   },
 };
 
