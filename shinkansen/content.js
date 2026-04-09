@@ -743,6 +743,72 @@
     );
   }
 
+  /**
+   * v0.57: 對譯文中重複出現的 slot index 做「graceful dedup」。
+   *
+   * 行為:
+   *   - 掃出所有 `⟦N⟧…⟦/N⟧` 配對(用 backreference 強制 close 對應的 N)。
+   *   - 對每個 idx N,若只出現一次直接保留;若 >1 次,挑「首次出現非空 inner」
+   *     的那個當 winner,其餘 occurrence 拆殼成純內文(只剩 inner)。
+   *   - 若全部 occurrence 都是空的(極罕見,LLM 雙重失誤),保留第一個。
+   *
+   * 為什麼用 regex 掃 top-level pair 就夠:
+   *   slot 是 source-side 序列化時遞增分配的 idx,巢狀 slot 一定是不同 idx
+   *   (例:`⟦3⟧⟦4⟧lit.⟦/4⟧⟦/3⟧`)。同一個 N 出現兩次必然代表 LLM 失誤,
+   *   且兩個 occurrence 是 disjoint 的 top-level pair——non-greedy `[\s\S]*?`
+   *   會自動找最近的 `⟦/N⟧` 對應。其他 idx 的 nested marker 留在 inner 裡,
+   *   parseSegment 後續會處理。
+   *
+   * inner「是否非空」的判定:剝掉所有 placeholder marker 之後仍有非空白文字
+   *   (CJK / 字母 / 數字 / 標點都算)。純空殼 `⟦0⟧⟦/0⟧` 或 `⟦0⟧ ⟦/0⟧`
+   *   都判為空。
+   */
+  function selectBestSlotOccurrences(text) {
+    if (!text) return text;
+    const re = new RegExp(PH_OPEN + '(\\d+)' + PH_CLOSE + '([\\s\\S]*?)' + PH_OPEN + '\\/\\1' + PH_CLOSE, 'g');
+    const occurrences = [];
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const inner = m[2];
+      const innerStripped = inner.replace(new RegExp(PH_OPEN + '\\*?\\/?\\d+' + PH_CLOSE, 'g'), '').trim();
+      occurrences.push({
+        idx: Number(m[1]),
+        start: m.index,
+        end: m.index + m[0].length,
+        inner: inner,
+        nonEmpty: innerStripped.length > 0,
+      });
+    }
+    if (occurrences.length === 0) return text;
+    // 依 idx 分組
+    const byIdx = new Map();
+    for (const o of occurrences) {
+      if (!byIdx.has(o.idx)) byIdx.set(o.idx, []);
+      byIdx.get(o.idx).push(o);
+    }
+    // 找出 losers (idx >1 次,且不是 winner)
+    const losers = [];
+    let dupSlotCount = 0;
+    for (const [, list] of byIdx) {
+      if (list.length === 1) continue;
+      dupSlotCount++;
+      let winner = list.find(o => o.nonEmpty);
+      if (!winner) winner = list[0];
+      for (const o of list) if (o !== winner) losers.push(o);
+    }
+    if (losers.length === 0) return text;
+    // 從尾向前 splice,避免位移影響後續 offset
+    losers.sort((a, b) => b.start - a.start);
+    let out = text;
+    for (const l of losers) {
+      out = out.slice(0, l.start) + l.inner + out.slice(l.end);
+    }
+    console.log('[Shinkansen v0.57] graceful dedup: dup_slots=' + dupSlotCount +
+      ' losers_demoted=' + losers.length +
+      ' preview=' + JSON.stringify(out.slice(0, 200)));
+    return out;
+  }
+
   function deserializeWithPlaceholders(translation, slots) {
     if (!translation) {
       return { frag: document.createDocumentFragment(), ok: false, matched: 0 };
@@ -753,36 +819,34 @@
     // 再把 CJK 周圍黏在佔位符旁的殘留空白收掉
     translation = collapseCjkSpacesAroundPlaceholders(translation);
 
-    // v0.52: 偵測 LLM 把同一個 slot index 重複引用的結構性失敗。
-    // 真實案例:Wikipedia ambox（17 個 nested slot）翻完後 Gemini 會把整段
-    // 譯文塞進「最後一組」⟦I⟧⟦SMALL⟧⟦A⟧ 內部,並在裡面 re-use slot 0/1/2,
-    // 前面所有 slot 變成空殼,結果頁面變成「整段斜體 + 整段粗體 + 結構錯亂」。
-    // 偵測規則:每個開頭標記 ⟦N⟧ 在譯文中只能出現一次。若任何 N 出現多次,
-    // 認定 LLM 結構性失敗,直接回 ok=false 讓上層走 plain-text fallback
-    // (譯文還是會出現,只是失去 inline formatting,好過現在的視覺災難)。
-    {
-      const openRe = new RegExp(PH_OPEN + '(\\d+)' + PH_CLOSE, 'g');
-      const seen = new Set();
-      const allOpens = [];
-      let mm;
-      while ((mm = openRe.exec(translation)) !== null) {
-        allOpens.push(mm[1]);
-        if (seen.has(mm[1])) {
-          // 診斷用 log:確認 v0.52 偵測有跑到
-          console.warn('[Shinkansen v0.52] slot dup detected, slots=' + slots.length +
-            ' allOpens=' + JSON.stringify(allOpens) +
-            ' translation_preview=' + JSON.stringify(translation.slice(0, 200)));
-          return { frag: document.createDocumentFragment(), ok: false, matched: 0 };
-        }
-        seen.add(mm[1]);
-      }
-      // 診斷用:列出 slot 數 > 5 的 segment 經過了偵測
-      if (slots.length > 5) {
-        console.log('[Shinkansen v0.52] dedup pass slots=' + slots.length +
-          ' opens=' + allOpens.length +
-          ' translation_preview=' + JSON.stringify(translation.slice(0, 200)));
-      }
-    }
+    // v0.57: 「graceful slot dedup」——優雅處理 LLM 把同一個 slot index 重複
+    // 引用的情況,保住絕大多數 slot 結構,只丟掉真的對不齊的那少數幾個。
+    //
+    // 取代了 v0.52 的「all-or-nothing rejection」:當時偵測到任何 dup 就整段
+    // 砍掉走 plain-text fallback。問題是 plain-text fallback 會把 element
+    // 整個 clean-slate(失去所有 `<a>` 連結),代價巨大;而真實 LLM 失誤通常
+    // 只影響 1–2 個 slot,卻拖累其他 12+ 個正確的 slot 一起陪葬。
+    //
+    // 真實案例(Wikipedia Edo lead p,14 slots):LLM 把 slot 11(`<a>former
+    // name</a>`)同時用在「⟦11⟧現今日本首都⟦/11⟧」與「⟦11⟧舊稱⟦/11⟧」兩處,
+    // 因為「現今首都」與「舊稱」在中文裡被分開敘述。整段譯文除了這個 slot 11
+    // 重複以外,其他 13 個 slot 全部正確就位。v0.52 detector 直接全部丟掉,
+    // 結果頁面整段失去所有連結。
+    //
+    // 反例(v0.52 當初為了解決的 Wikipedia ambox):LLM 把所有譯文塞進「最後
+    // 一組」⟦I⟧⟦SMALL⟧⟦A⟧ 內部,前面 slot 0/1/2 變成空殼 ⟦0⟧⟦/0⟧。在這個
+    // 反例下,first-occurrence 是空的,winner 應該選 second-occurrence。
+    //
+    // 因此 winner 的選法是:**首次出現的「非空」occurrence**。empty wrapper
+    // 一律不算 winner。若所有 occurrence 都是空的,就保留第一個(都一樣)。
+    //
+    // loser occurrence 的處理:把外殼 `⟦N⟧…⟦/N⟧` 拆掉,只留 inner text。
+    // inner text 自己可能還有別的 slot marker,後續 parseSegment 會處理。
+    //
+    // 通則:這條規則描述的是「placeholder 協定下 LLM 重複引用 slot」這個
+    // 結構特徵,不綁站點、不綁 selector、不綁特定 slot index。任何網頁的
+    // 任何元素遇到同樣 LLM 失誤都會走同一條 graceful path。
+    translation = selectBestSlotOccurrences(translation);
 
     // v0.32 起：recursive parse to support nested placeholders
     // （例如 ⟦0⟧一般文字 ⟦1⟧連結文字⟦/1⟧ 更多文字⟦/0⟧)。
@@ -1462,7 +1526,8 @@
   }
 
   /**
-   * v0.55: 共用的「注入目標解析」helper。回答「要把譯文寫到哪個元素?」
+   * v0.55 / v0.56: 共用的「注入目標解析」helper。回答「要把譯文寫到哪個
+   * 元素?」
    *
    * 預設值是 `el` 本身——呼叫端清空 `el.children` 再 append 譯文就對了,
    * `el` 自己的 padding / background / font-family / line-height 等樣式會
@@ -1470,26 +1535,70 @@
    *
    * 唯一例外:**`el` 自己 computed font-size 趨近 0**。這是 MJML / Mailjet /
    * Mailchimp 等 HTML email 模板在消除 `inline-block` 欄位縫隙時的業界標準
-   * 做法——外層容器 `<td style="font-size:0">`,真正字體放在內層 `<div>` /
-   * `<span>` wrapper 上。這類 `el` 的「font-size 繼承來源」是內層 wrapper,
-   * 若直接清空 `el.children` 會把這個 wrapper 也清掉,新 content 只能繼承
-   * `el` 的 0px,整段消失。命中時改把「第一個 font-size 正常的後代」當寫入
-   * 目標,清掉它的 children 後再 append,就能保留 wrapper 提供的字體大小。
+   * 做法——外層容器 `<td style="font-size:0">`,真正字體放在內層 wrapper 上。
+   * 這類 `el` 的「font-size 繼承來源」是內層 wrapper,若直接清空 `el.children`
+   * 會把這個 wrapper 也清掉,新 content 只能繼承 `el` 的 0px,整段消失。
+   * 命中時改把「第一個 font-size 正常的後代」當寫入目標,清掉它的 children
+   * 後再 append,就能保留 wrapper 提供的字體大小。
    *
-   * 注意:這個 helper 描述的是 DOM / CSS 的**結構特徵**,不是特定站點的
-   * selector 或 class。`font-size:0` 技巧在 email HTML 生態之外也有人用,
-   * 任何走這條路的網頁都會命中同一個處理邏輯。
+   * 但**descent 過程必須拒絕整個 slot subtree** (`isPreservableInline` /
+   * `isAtomicPreserve` 命中的元素**及其所有後代**)。理由:slot 元素本身與
+   * 它內部的所有節點都會由 deserializer 從 shell + 譯文重建,寫入目標若
+   * 落在 slot 內任何一層,clean-slate-append fragment 都會把新 shell 塞到
+   * 舊 shell 裡面,造成雙層巢狀;padding / margin / border 全部加倍,視覺上
+   * 就是按鈕往一邊偏移凸出。
+   *
+   * **歷史**:
+   * - v0.55 的 Gmail Claude Code welcome email「深入了解」按鈕踩到一次——
+   *   MJML 結構是 `<td font-size:0> <a font-size:18px>Learn more</a> </td>`,
+   *   resolveWriteTarget 把 descent 停在 `<a>` 上,fragment 裡又有一個從 slot
+   *   shell 複製出來的 `<a>`,結果變成 `<td> <a> <a>深入了解</a> </a> </td>`,
+   *   padding 8px 35px 加倍成 16px 70px,按鈕往左凸出。v0.56 的 fix 是「skip
+   *   slot 元素本身」,對這個結構足夠。
+   *
+   * - v0.57 的同一封 email 又踩到,因為來源結構其實是
+   *   `<td font-size:0> <a> <span> Learn more </span> </a> </td>`(SPAN 沒
+   *   class 沒 style,不是 preservable)。v0.56 walk 跳過 `<a>`,但繼續往下
+   *   走進 `<a>` 內部找到那個 SPAN(font-size 18 from inheritance),把 SPAN
+   *   當寫入目標 → clean-slate SPAN 後塞 fragment(`<a>譯文</a>`)→ 結果變成
+   *   `<td><a><span><a>譯文</a></span></a></td>`,outer A 沒被清(因為 target
+   *   是 SPAN 不是 td),inner A 是 slot 0 shell。padding 又加倍。
+   *
+   * - v0.58 的 fix:walk 時把 slot 元素整個 subtree FILTER_REJECT,不只是
+   *   元素本身。slot 內部所有後代都不該當寫入目標,因為 deserializer 重建
+   *   的是 slot 「整段」而非「殼 + 你內部的某個節點」。
+   *
+   * 通則:descent 是在找「td/wrapper 裡面唯一一個非 slot 的真正內容容器」,
+   * slot subtree 整段都是 slot 的責任範圍,walk 不能進去。對 MJML、`<button>`
+   * 包 `<span>`、或任何 inline 元素被巢狀包裹的排版都適用。
    */
   function resolveWriteTarget(el) {
-    const cs = el.ownerDocument?.defaultView?.getComputedStyle?.(el);
+    const win = el.ownerDocument?.defaultView;
+    const cs = win?.getComputedStyle?.(el);
     const px = cs ? parseFloat(cs.fontSize) : NaN;
     if (Number.isFinite(px) && px < 1) {
-      const all = el.querySelectorAll('*');
-      for (const d of all) {
-        const dcs = d.ownerDocument?.defaultView?.getComputedStyle?.(d);
-        const dpx = dcs ? parseFloat(dcs.fontSize) : NaN;
-        if (Number.isFinite(dpx) && dpx >= 1) return d;
-      }
+      // v0.58: 用 TreeWalker + FILTER_REJECT 拒絕整個 slot subtree(只 SKIP
+      // 會繼續走進子節點,REJECT 才會跳過整段)。
+      const walker = el.ownerDocument.createTreeWalker(
+        el,
+        NodeFilter.SHOW_ELEMENT,
+        {
+          acceptNode(node) {
+            if (node === el) return NodeFilter.FILTER_SKIP;
+            if (isPreservableInline(node) || isAtomicPreserve(node)) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            const dcs = win?.getComputedStyle?.(node);
+            const dpx = dcs ? parseFloat(dcs.fontSize) : NaN;
+            if (Number.isFinite(dpx) && dpx >= 1) {
+              return NodeFilter.FILTER_ACCEPT;
+            }
+            return NodeFilter.FILTER_SKIP;
+          },
+        }
+      );
+      const found = walker.nextNode();
+      if (found) return found;
     }
     return el;
   }
