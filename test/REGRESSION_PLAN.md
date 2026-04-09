@@ -1,5 +1,29 @@
 # Shinkansen 回歸測試建置計畫
 
+> **狀態：✅ 已完成（v0.59，2026-04-09）**
+> 全部 10 條 spec (3.1–3.10) 落地、`testInject` / `selectBestSlotOccurrences`
+> debug API 已加入 `window.__shinkansen`、`localServer` fixture 已建。
+> 全綠 baseline 標在 git tag `regression-baseline`。
+> 8 條 inject/detect spec 都跑過 sanity check (對應 fix sabotage → 斷言精準
+> 炸 → restore)。執行方式：`npx playwright test test/regression/`,
+> 全套 ~13 秒。
+>
+> 完成清單對照:
+>   - [x] 3.1 gmail-button-nested-a       (inject-gmail-button.spec.js)
+>   - [x] 3.2 wiki-edo-lead-slot-dup       (inject-wiki-edo-slot-dup.spec.js)
+>   - [x] 3.3 gmail-mjml-body-text         (inject-gmail-mjml-body.spec.js)
+>   - [x] 3.4 wiki-ambox-maintenance-warning (inject-wiki-ambox.spec.js)
+>   - [x] 3.5 wiki-br-as-paragraph         (inject-br-paragraph.spec.js)
+>   - [x] 3.6 wiki-sup-reference-atomic    (inject-sup-reference.spec.js)
+>   - [x] 3.7 stratechery-mixed-content-fragment (detect-stratechery.spec.js)
+>   - [x] 3.8 twitter-interactive-widget-skip (detect-twitter-widget.spec.js)
+>   - [x] 3.9 selectBestSlotOccurrences pure (pure-slot-dedup.spec.js)
+>   - [x] 3.10 serialize-deserialize roundtrip (pure-roundtrip.spec.js)
+>
+> 以下原 handoff 內容保留供未來追溯動機與設計脈絡。
+>
+> ---
+>
 > 撰寫於 v0.58 之後，由解 v0.56/v0.57/v0.58 三連 bug 的 Claude 留下的 handoff。
 > 下一對話（建議在 Claude Code 端執行）依這份計畫動手即可，不必重讀全部 bug 歷史。
 
