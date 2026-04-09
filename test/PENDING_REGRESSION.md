@@ -18,22 +18,7 @@
 
 ## 條目
 
-### v0.82 — 2026-04-09 — SPA 動態載入內容支援
-- **功能描述**：SPA 導航偵測（pushState/replaceState/popstate）+ 翻譯後 MutationObserver
-- **來源 URL**：Twitter/X（SPA 導航）、任何 lazy-load 內容的頁面
-- **修在**：shinkansen/content.js 的 `handleSpaNavigation`、`resetForSpaNavigation`、`startSpaObserver`、`spaObserverRescan`
-- **為什麼還不能寫測試**：
-    SPA 導航偵測需要真正的 pushState 環境（靜態 fixture 做不到），
-    MutationObserver 需要模擬動態新增 DOM 節點。需要一個可以
-    programmatically 觸發 pushState 並在 callback 後新增 DOM 的測試頁面，
-    且需要 mock chrome.storage.sync 的 domainRules。等切到 Claude Code 端
-    再設計適當的 test harness。
-- **建議 spec 位置**：test/regression/spa-navigation.spec.js
-- **建議測試場景**：
-    1. pushState 後 STATE 被重置（translated = false, originalHTML 清空）
-    2. MutationObserver 偵測到新增段落後觸發 rescan
-    3. MutationObserver 達到 MAX_RESCANS 後自動停止
-    4. restorePage 後 Observer 被 disconnect
+(目前沒有 pending 條目)
 
 <!--
 條目格式範例(實際加入時把上面那行 placeholder 刪掉):
