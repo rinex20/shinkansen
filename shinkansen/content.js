@@ -21,6 +21,9 @@
     // 但不移除元素本身（data-shinkansen-translated 屬性留存）。
     // 有了這份快取就能在偵測到覆寫時立刻重新套用，不需重新呼叫 API。
     translatedHTML: new Map(), // el → translatedHTML
+    // v1.0.23: 續翻模式——使用者手動翻譯後，同一頁面的 SPA 導航自動續翻。
+    // 按還原原文或整頁重新載入時清除。
+    stickyTranslate: false,
   };
 
   // ─── v0.88: 統一 Log 系統（透過 message 送到 background buffer） ───
@@ -385,7 +388,11 @@
   const SEMANTIC_CONTAINER_EXCLUDE_TAGS = new Set(['FOOTER']);
   // 排除這些 ARIA role 的容器（全站頂部 banner、搜尋區、輔助側欄等）
   // v1.0.15: 'navigation' 隨 NAV 一起移除
-  const EXCLUDE_ROLES = new Set(['banner', 'contentinfo', 'search']);
+  // v1.0.22: 新增 'grid'——ARIA grid 是互動式資料格（email 列表、檔案管理器、
+  // 試算表等），cell 內容是獨立資料欄位（寄件者/主旨/日期），不是文章段落。
+  // 翻譯整個 gridcell 會摧毀欄位結構。Gmail inbox 的 <table role="grid"> 是
+  // 典型案例。純內容表格（Wikipedia 等）不會有 role="grid"。
+  const EXCLUDE_ROLES = new Set(['banner', 'contentinfo', 'search', 'grid']);
   // v1.0.12: 豁免 isInteractiveWidgetContainer 檢查的標籤。
   // 這些標籤的 HTML 語意決定了它們是內容容器，內部的 button 是次要控制項：
   // - PRE: 預先格式化的文字（v1.0.8，Medium 留言的 "more" 按鈕）
@@ -1356,6 +1363,50 @@
       seen.add(d);
     });
 
+    // v1.0.22: 「grid cell leaf text」補抓 —— ARIA grid（email 列表、檔案管理器
+    // 等）的 <td> 被 EXCLUDE_ROLES 排除後，掃描 gridcell 內部的純文字 leaf
+    // 元素個別翻譯。例如 Gmail inbox 的郵件主旨 <span>。
+    //
+    // 結構通則：
+    //   1. 元素位於 table[role="grid"] 內的 <td> 中
+    //   2. 是純文字 leaf：**沒有任何子元素**（children.length === 0）
+    //      —— 有子元素的 span（如 Gmail 預覽 <span>text<span>-</span></span>）
+    //      在序列化→翻譯→注入過程中，佔位符重建可能插入 <br> 撐破行高。
+    //      限制純文字 leaf 可確保注入後只有 textContent 替換，不改變 DOM 結構。
+    //   3. innerText >= 15 字（擋掉日期、圖示、短 label）
+    //   4. 通過 isVisible / isCandidateText / 未翻過
+    //
+    // 為什麼不用 walker 處理：grid 內的 DOM 通常只有 <div>/<span>，
+    // 沒有 BLOCK_TAG（P/LI/H1...），walker 沒有可 accept 的節點。
+    // 為什麼用 leaf 而不是整個 td：td 包含多個獨立欄位（寄件者/主旨/預覽/日期），
+    // 翻譯整個 td 會摧毀欄位結構；翻譯純文字 leaf 只替換 textContent，保留結構。
+    document.querySelectorAll('table[role="grid"] td').forEach(td => {
+      const tdText = (td.innerText || '').trim();
+      if (tdText.length < 20) return; // 跳過短 cell（日期欄、icon 欄）
+      if (td.hasAttribute('data-shinkansen-translated')) return;
+
+      td.querySelectorAll('*').forEach(el => {
+        if (seen.has(el)) return;
+        if (el.hasAttribute('data-shinkansen-translated')) return;
+
+        // 允許含短文字子元素的 leaf（例如 Gmail 預覽 <span>text<span>-</span></span>）
+        // CSS 會隱藏序列化重建產生的 <br>，維持單行排版
+        for (const child of el.children) {
+          if ((child.innerText || '').trim().length >= 15) return;
+        }
+
+        const text = (el.innerText || '').trim();
+        if (text.length < 15) return;
+
+        if (!isVisible(el)) return;
+        if (!isCandidateText(el)) return;
+
+        if (stats) stats.gridCellLeaf = (stats.gridCellLeaf || 0) + 1;
+        results.push({ kind: 'element', el });
+        seen.add(el);
+      });
+    });
+
     return results;
   }
 
@@ -1647,12 +1698,25 @@
 
     // v0.76: 頁面層級語言偵測 — 若整頁文字以繁體中文為主，直接跳過。
     // 這避免了繁中頁面上少數英文腳註/引用被單獨送去翻譯的問題。
-    // 取 document.body.innerText 的前 2000 字做樣本（足以判斷主要語言，
-    // 且避免在超長頁面上做全文掃描）。
-    const pageSample = (document.body.innerText || '').slice(0, 2000);
-    if (pageSample.length > 20 && isTraditionalChinese(pageSample)) {
-      showToast('error', '此頁面已是繁體中文，不需翻譯', { autoHideMs: 3000 });
-      return;
+    // v1.0.21: 可在設定頁關閉此檢查（元素層級的逐段繁中跳過仍然生效）。
+    // Gmail 等介面語言為繁中但內容多為英文的網站，可關閉此選項。
+    try {
+      const { skipTraditionalChinesePage } = await chrome.storage.sync.get('skipTraditionalChinesePage');
+      // 預設 true（未設定時 undefined !== false → 走檢查）
+      if (skipTraditionalChinesePage !== false) {
+        const pageSample = (document.body.innerText || '').slice(0, 2000);
+        if (pageSample.length > 20 && isTraditionalChinese(pageSample)) {
+          showToast('error', '此頁面已是繁體中文，不需翻譯', { autoHideMs: 3000 });
+          return;
+        }
+      }
+    } catch (_) {
+      // storage 讀取失敗時 fallback 到原行為（做檢查）
+      const pageSample = (document.body.innerText || '').slice(0, 2000);
+      if (pageSample.length > 20 && isTraditionalChinese(pageSample)) {
+        showToast('error', '此頁面已是繁體中文，不需翻譯', { autoHideMs: 3000 });
+        return;
+      }
     }
 
     // v0.80: 設定翻譯進行中旗標與 AbortController
@@ -1842,6 +1906,7 @@
       }
 
       STATE.translated = true;
+      STATE.stickyTranslate = true; // v1.0.23: 啟用續翻模式
       chrome.runtime.sendMessage({ type: 'SET_BADGE_TRANSLATED' }).catch(() => {});
 
       if (!failures.length) {
@@ -2411,6 +2476,7 @@
     STATE.originalHTML.clear();
     STATE.translatedHTML.clear(); // v1.0.14
     STATE.translated = false;
+    STATE.stickyTranslate = false; // v1.0.23: 手動還原 → 關閉續翻模式
     // 通知 background 清掉 extension icon 的紅點
     chrome.runtime.sendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
     showToast('success', '已還原原文', { progress: 1, autoHideMs: 2000 });
@@ -2473,20 +2539,31 @@
     chrome.runtime.sendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
     // 關掉 toast
     hideToast();
-    sendLog('info', 'spa', 'SPA navigation detected, state reset', { url: location.href });
+    sendLog('info', 'spa', 'SPA navigation detected, state reset', { url: location.href, stickyTranslate: STATE.stickyTranslate });
   }
 
   /**
-   * SPA 導航後檢查白名單，若符合則自動翻譯新頁面。
+   * SPA 導航後檢查白名單或續翻模式，決定是否自動翻譯新頁面。
    */
   async function handleSpaNavigation() {
     const newUrl = location.href;
     if (newUrl === spaLastUrl) return; // URL 沒變（例如 replaceState 更新 query 但 pathname 不變）
     spaLastUrl = newUrl;
+    // v1.0.23: 先記住 stickyTranslate，因為 resetForSpaNavigation 不清它，
+    // 但 translatePage 內若已 translated 會走 restorePage 把它清掉。
+    const wasSticky = STATE.stickyTranslate;
     resetForSpaNavigation();
 
     // 等 DOM 穩定（SPA 框架通常在 pushState 後才開始 render 新內容）
     await new Promise(r => setTimeout(r, SPA_NAV_SETTLE_MS));
+
+    // v1.0.23: 續翻模式 — 使用者曾在此頁面手動翻譯過，SPA 導航後自動續翻。
+    // 優先於白名單檢查（白名單是「永遠自動翻」，續翻是「這次 session 自動翻」）。
+    if (wasSticky) {
+      sendLog('info', 'spa', 'SPA nav: sticky translate active, auto-translating', { url: location.href });
+      translatePage();
+      return;
+    }
 
     // 檢查網域白名單——若在白名單內，自動翻譯新內容
     try {
@@ -2544,6 +2621,11 @@
   };
   window.addEventListener('popstate', () => handleSpaNavigation());
 
+  // v1.0.23: hashchange 監聽 — Gmail 等 hash-based SPA 在導航時不走
+  // pushState（monkey-patch 攔不到），也不觸發 popstate（只有瀏覽器上/下一頁才觸發）。
+  // hashchange 是 hash 路由唯一可靠的同步事件。
+  window.addEventListener('hashchange', () => handleSpaNavigation());
+
   // ─── v1.0.10: URL 輪詢（SPA 導航 safety net） ─────────────
   // monkey-patch history API 有盲區：部分 SPA 框架（React Router 等）在
   // module 初始化時就快取 history.pushState 的原始參照，content script
@@ -2556,9 +2638,9 @@
       // v1.0.13: 若已翻譯且 DOM 中仍有翻譯節點,視為捲動型 URL 更新
       // (如 Engadget 無限捲動用 replaceState 反映目前可見文章)。
       // 只靜默同步 spaLastUrl,不重設翻譯狀態。
-      // 真正的 SPA 導航 (pushState) 在 500ms 輪詢偵測到時,
-      // 框架已完成 re-render,原翻譯節點會被新 DOM 取代,不會命中此分支。
-      if (STATE.translated && document.querySelector('[data-shinkansen-translated]')) {
+      // v1.0.23: 但續翻模式下不跳過——續翻表示使用者想繼續翻譯，
+      // 即使有翻譯節點也應處理（Gmail 點進/退出 email 時舊節點可能殘留）。
+      if (STATE.translated && !STATE.stickyTranslate && document.querySelector('[data-shinkansen-translated]')) {
         sendLog('info', 'spa', 'URL changed while translated content present — scroll-based update, skipping reset', { newUrl: location.href, oldUrl: spaLastUrl });
         spaLastUrl = location.href;
         return;

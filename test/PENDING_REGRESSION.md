@@ -118,6 +118,45 @@
     3. 等待 1.5 秒，驗證週期性掃描已自動修復內容回中文
     4. 模擬元素暫時 `el.remove()` 再 `parent.appendChild(el)` 並覆寫 innerHTML，驗證快取未被刪除、重新接回後仍可還原
 
+### v1.0.23 — 2026-04-10 — SPA 續翻模式（Gmail 點進/退出 email 自動翻譯）
+- **症狀**：在 Gmail inbox 翻譯完成後，點進一封 email 不會自動翻譯信件內容；退出 email 回到 inbox 時，原本翻好的主旨/預覽恢復成英文
+- **來源 URL**：`https://mail.google.com/mail/u/0/#inbox`（Gmail 收件匣，點進任一封 email）
+- **修在**：`shinkansen/content.js`（新增 `STATE.stickyTranslate`、`handleSpaNavigation()` 優先檢查 stickyTranslate、URL 輪詢 scroll check 在 stickyTranslate 時不跳過、新增 `hashchange` 事件監聽）
+- **根因**：Gmail 使用 hash-based 路由（`#inbox` → `#inbox/FMfcg...`），不走 `pushState`，monkey-patch 和 `popstate` 攔不到。URL 輪詢能偵測到 hash 變化，但 v1.0.13 的捲動跳過邏輯在已翻譯狀態下會跳過所有 URL 變化，導致 Gmail 導航不觸發 `handleSpaNavigation()`。即使觸發，也只在白名單內才自動翻譯
+- **為什麼還不能寫測試**：
+    續翻模式涉及 SPA 導航→重設狀態→自動翻譯的完整流程，
+    需要模擬 hash change 事件（`window.dispatchEvent(new HashChangeEvent(...))`）
+    + 翻譯完成（mock API）+ 再次 hash change + 驗證第二次翻譯觸發。
+    Playwright fixture 可以模擬 hashchange，但 `translatePage()` 依賴
+    `chrome.storage.sync` 和 `chrome.runtime.sendMessage`，需要完整 mock 環境。
+- **建議 spec 位置**：`test/regression/spa-sticky-translate.spec.js`
+- **建議測試方向**：
+    1. 在 fixture 頁面 mock translatePage 為 no-op counter
+    2. 手動設 `STATE.stickyTranslate = true` + `STATE.translated = true`
+    3. `window.dispatchEvent(new HashChangeEvent('hashchange', { newURL: '...#page2' }))`
+    4. 驗證 translatePage counter 增加（自動續翻觸發）
+    5. 呼叫 restorePage，再做 hashchange，驗證 counter 不增加（續翻已關閉）
+
+### v1.0.21+v1.0.22 — 2026-04-10 — Gmail inbox grid cell 翻譯排版修正
+- **症狀**：Gmail inbox 信件列表翻譯後排版崩壞：v1.0.21 前整個 `<td>` 被當成翻譯單位，sender/subject/preview 混在一起；修正後信件行從 20px 撐高到 40px（序列化重建的 `<br>` 撐破 flex 單行佈局）
+- **來源 URL**：`https://mail.google.com/mail/u/0/#inbox`（Gmail 收件匣）
+- **修在**：`shinkansen/content.js`（`EXCLUDE_ROLES` 加 `'grid'`、`collectParagraphs` grid cell leaf 補抓 pass）、`shinkansen/content.css`（`table[role="grid"] [data-shinkansen-translated] br { display: none }`）
+- **根因（三層）**：
+    1. `collectParagraphs` walker 以 BLOCK_TAGS 為入口，Gmail grid cell 內只有 `<div>/<span>`，walker 無法進入 → 整個 `<td>` 被當成翻譯單位
+    2. 加 `grid` 到 `EXCLUDE_ROLES` 後全部擋住 → 補抓 pass 掃 `table[role="grid"] td` 下的 leaf 元素
+    3. 預覽欄位 `<span>text<span>-</span></span>` 序列化時 `-` 子元素變佔位符，重建時產生 `<br>`，撐破 `white-space:nowrap` + `overflow:hidden` 的單行佈局
+- **為什麼還不能寫測試**：
+    Gmail inbox 的 DOM 結構極度動態：`<table role="grid">` + 11 個 `<td>` per row，
+    每個 cell 的 flex 佈局 + `overflow:hidden` + `text-overflow:ellipsis` + `white-space:nowrap`
+    高度依賴 Gmail 的 CSS。可以建一個簡化的 `role="grid"` table fixture 測偵測邏輯，
+    但排版修正（CSS `br { display: none }` + flex 單行）需要真實 CSS 環境才有意義。
+- **建議 spec 位置**：`test/regression/detect-grid-cell.spec.js`
+- **建議測試方向**：
+    1. 建 fixture：`<table role="grid"><tr><td><div><span>Short text that should be skipped</span></div></td><td><div><span>A longer subject line that qualifies for translation detection</span></div></td></tr></table>`
+    2. 驗證 collectParagraphs 不偵測整個 `<td>`，但偵測到 leaf `<span>` 中 ≥15 字元的文字
+    3. 驗證含短文字子元素的 `<span>text<span>-</span></span>` 也被偵測到
+    4. 注入測試：mock 翻譯結果注入後，CSS 隱藏 `<br>` 不撐高行高（需 computed style 檢查）
+
 <!--
 條目格式範例(實際加入時把上面那行 placeholder 刪掉):
 

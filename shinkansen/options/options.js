@@ -136,6 +136,9 @@ async function load() {
   const opacityPct = Math.round((s.toastOpacity ?? 0.9) * 100);
   $('toastOpacity').value = opacityPct;
   $('toastOpacityLabel').textContent = opacityPct;
+
+  // v1.0.21: 頁面層級繁中偵測開關
+  $('skipTraditionalChinesePage').checked = s.skipTraditionalChinesePage !== false;
 }
 
 async function save() {
@@ -184,6 +187,8 @@ async function save() {
     },
     // v1.0.17: Toast 透明度
     toastOpacity: Number($('toastOpacity').value) / 100,
+    // v1.0.21: 頁面層級繁中偵測開關
+    skipTraditionalChinesePage: $('skipTraditionalChinesePage').checked,
   };
   await chrome.storage.sync.set(settings);
   $('save-status').textContent = '✓ 已儲存';

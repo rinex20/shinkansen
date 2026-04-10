@@ -14,3 +14,10 @@
 .shinkansen-editable:focus {
   outline-color: rgba(0, 113, 227, 0.7) !important;
 }
+
+/* v1.0.22: grid cell 翻譯排版修正 —— 序列化→注入過程中佔位符重建
+ * 可能產生 <br>，在 ARIA grid 的單行排版裡會撐破行高。
+ * 隱藏 <br> 讓文字維持同一行，由原本的 overflow:hidden + text-overflow:ellipsis 截斷。 */
+table[role="grid"] [data-shinkansen-translated] br {
+  display: none !important;
+}

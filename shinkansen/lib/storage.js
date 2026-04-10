@@ -107,6 +107,10 @@ export const DEFAULT_SETTINGS = {
   maxTranslateUnits: 1000,
   // v1.0.17: Toast 透明度（0.1–1.0），讓使用者在無限捲動網站上降低 toast 干擾
   toastOpacity: 0.9,
+  // v1.0.21: 頁面層級繁體中文偵測開關。開啟時若整頁文字以繁中為主則跳過不翻譯；
+  // 關閉時不做頁面層級檢查（元素層級仍會個別跳過繁中段落）。
+  // Gmail 等介面語言為繁中但內容多為英文的網站，可關閉此選項。
+  skipTraditionalChinesePage: true,
 };
 
 // v0.62 起：apiKey 改存 chrome.storage.local，不走 Google 帳號跨裝置同步。
