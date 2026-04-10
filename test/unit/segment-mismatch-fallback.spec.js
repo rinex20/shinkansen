@@ -79,7 +79,7 @@ test.beforeEach(() => {
   fetchResponses = [];
 });
 
-const SEP_RULE_MARKER = '額外規則（多段翻譯分隔符，極重要）';
+const SEP_RULE_MARKER = '額外規則（多段翻譯分隔符與序號，極重要）';
 
 test.describe('v0.78 明確分隔符規則', () => {
   test('多段翻譯 → systemInstruction 包含分隔符規則與正確段數', async () => {
@@ -90,7 +90,7 @@ test.describe('v0.78 明確分隔符規則', () => {
     const sys = lastSystemInstruction();
     expect(sys).toContain(SEP_RULE_MARKER);
     expect(sys).toContain('本批次包含 3 段文字');
-    expect(sys).toContain('恰好包含 3 段譯文和 2 個分隔符');
+    expect(sys).toContain('恰好輸出 3 段譯文和 2 個分隔符');
   });
 
   test('單段翻譯 → 不追加分隔符規則', async () => {
@@ -187,7 +187,7 @@ test.describe('v0.77 thinkingConfig for translateChunk', () => {
     expect(fetchCalls[0].body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
   });
 
-  test('useThinking=true → 不包含 thinkingConfig', async () => {
+  test('useThinking=true → 仍包含 thinkingConfig（v0.88 起一律關閉思考）', async () => {
     pushResponse('你好');
     const thinkingSettings = {
       ...settings,
@@ -195,6 +195,6 @@ test.describe('v0.77 thinkingConfig for translateChunk', () => {
     };
     await translateBatch(['Hello'], thinkingSettings);
 
-    expect(fetchCalls[0].body.generationConfig.thinkingConfig).toBeUndefined();
+    expect(fetchCalls[0].body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
   });
 });
